@@ -79,24 +79,28 @@ def get_deals_by_category(api, category_id):
             "domainId": 11,  
             "includeCategories": category_id,
             "dateRange": 0,
-            
-            # Si deseas también aPlus aquí, Keepa no siempre lo soporta en deals,
-            # pero si lo hiciera, podrías añadir: "aPlus": 1
+            "priceTypes": [0], # 0: Precio de AMAZON
+            "isFilterEnabled": True,
+            "singleVariation": True,
+            "deltaPercentRange": [20, 95], # Rango de descuento
+            "sortType":2, # 2: Ordenar por descuento
+            "isRangeEnabled": True,
+            "currentRange": [15000, 3000000]
         }
         deals_response = api.deals(deal_params)
-        print("\n🔍 Respuesta cruda de Keepa:")
+        # print("\n🔍 Respuesta cruda de Keepa:")
         # print(json.dumps(deals_response, indent=4, default=str))
         
         if isinstance(deals_response, dict):
             if deals_response.get('dr'):
-                print(f"✅ Ofertas encontradas para la categoría {category_id}")
+                # print(f"✅ Ofertas encontradas para la categoría {category_id}")
                 return deals_response
             else:
                 print(f"❌ No se encontraron ofertas para la categoría {category_id}")
                 return None
         elif isinstance(deals_response, list):
             if len(deals_response) > 0:
-                print(f"✅ Ofertas encontradas para la categoría {category_id} (respuesta es lista)")
+                # print(f"✅ Ofertas encontradas para la categoría {category_id} (respuesta es lista)")
                 return deals_response
             else:
                 print(f"❌ La lista de ofertas para la categoría {category_id} está vacía.")
@@ -135,118 +139,183 @@ def get_image_url_from_integers(image_integers):
         return None
     
     
-def process_deals(deals_response):
+def process_deals(deals_response, discount_weight=0.6, savings_weight=0.4):
     """
-    Procesa la respuesta de Keepa y devuelve una lista de diccionarios con:
-      - Title
-      - Precio Original (MXN)
-      - Precio con Descuento (MXN)
-      - Descuento (monto en MXN)
-      - Categoría (IDs concatenados)
-      - Link (URL de Amazon)
-      - Image (URL de la imagen; se intenta extraer desde aPlus según doc, luego imagesCSV, luego ASIN)
+    Procesa la respuesta de Keepa y devuelve una lista de diccionarios con información detallada.
+    Ordena los resultados usando un sistema de puntuación ponderada entre descuento y ahorro.
+    
+    Args:
+        deals_response: La respuesta de la API de Keepa
+        discount_weight: Peso para el porcentaje de descuento (0-1)
+        savings_weight: Peso para el ahorro absoluto (0-1)
     """
     processed = []
+    total_deals = 0
+    skipped_deals = 0
+    
     if isinstance(deals_response, dict):
         deals_list = deals_response.get('dr', [])
-        print(deals_list[0])
+        if deals_list and len(deals_list) > 0:
+            print(f"✅ Encontrados {len(deals_list)} deals en respuesta")
     elif isinstance(deals_response, list):
         deals_list = deals_response
+        print(f"✅ Encontrados {len(deals_list)} deals en lista")
     else:
         print("❌ Formato de respuesta inesperado.")
         return processed
 
-    for deal in deals_list:
-        title = deal.get('title', 'N/A')
+    for i, deal in enumerate(deals_list):
+        total_deals += 1
+        try:
+            title = deal.get('title', 'N/A')
+            print(f"\nProcesando deal #{i+1}:...")
 
-        # 1) Construir link a Amazon
-        asin = deal.get('asin', None)
-        if asin:
-            link = f"https://www.amazon.com.mx/dp/{asin}"
-        else:
-            link = "No ASIN disponible"
+            # 1) Construir link a Amazon
+            asin = deal.get('asin', None)
+            if asin:
+                link = f"https://www.amazon.com.mx/dp/{asin}"
+            else:
+                link = "No ASIN disponible"
+                print(f"⚠️ Deal sin ASIN")
 
-        # Obtain image by transforming list of integers where Each entry represents the integer of a US-ASCII (ISO646-US) coded character - PUT CODE HERE
-        image_integers = deal.get('image', [])
-            
-        # 2) Intentar extraer la imagen desde aPlus
-        
-        if image_integers:
-            image_url = get_image_url_from_integers(image_integers)
-        else:
-            # Continue with your fallback methods for image URLs
-            image_url = "No se pudo armar el link"
-        # a_plus = deal.get("aPlus", [])
-        # if a_plus and isinstance(a_plus, list):
-        #     # Según doc: "aPlus": [{ "module": { "title": "...", "text": "...", "image": ... } }]
-        #     for module in a_plus:
-        #         module_data = module.get("module", {})
-        #         if "image" in module_data:
-        #             # Puede ser string o array de strings
-        #             image_field = module_data["image"]
-        #             if isinstance(image_field, str):
-        #                 # Caso: "image" es un string con la URL
-        #                 image_url = image_field
-        #                 break
-        #             elif isinstance(image_field, list) and len(image_field) > 0:
-        #                 # Caso: "image" es un array de URLs, tomamos la primera
-        #                 image_url = image_field[0]
-        #                 break
+            # 2) Obtener la imagen usando el array de enteros ASCII
+            image_integers = deal.get('image', [])
+            if image_integers:
+                image_url = get_image_url_from_integers(image_integers)
+            else:
+                image_url = "No se pudo armar el link"
+                print(f"⚠️ No se pudo obtener la imagen")
 
-        # # 3) Fallback: usar imagesCSV
-        # if not image_url:
-        #     images_csv = deal.get('imagesCSV', "")
-        #     print(f"DEBUG: imagesCSV = {images_csv}")
-        #     if images_csv:
-        #         image_list = images_csv.split(',')
-        #         if len(image_list) > 0 and image_list[0]:
-        #             # Depuración: imprimir el primer valor
-        #             print(f"DEBUG: image_list[0] = {image_list[0].strip()}")
-        #             image_url = f"https://images-na.ssl-images-amazon.com/images/I/{image_list[0].strip()}._SL1500_.jpg"
-
-        # # 4) Fallback final: construir la URL a partir del ASIN (no siempre funciona)
-        # if not image_url and asin:
-        #     image_url = f"https://m.media-amazon.com/images/I/PERATE.jpg" 
-
-        # 5) Extraer precios
-        current_arr = deal.get('current', [])
-        if isinstance(current_arr, list) and len(current_arr) > 0:
+            # 3) Extraer precios actuales (con descuento)
+            current_arr = deal.get('current', [])
+            if not isinstance(current_arr, list) or len(current_arr) == 0:
+                print(f"❌ No hay array de precios actuales: {current_arr}")
+                skipped_deals += 1
+                continue
+                
+            # Precio actual con descuento (Amazon price, index 0)
             current_price_cents = current_arr[0]
-        else:
+            if current_price_cents is None or current_price_cents < 0:
+                print(f"❌ Precio actual inválido: {current_price_cents}")
+                skipped_deals += 1
+                continue
+                
+            current_price = current_price_cents / 100.0
+            print(f"✅ Precio actual: {current_price}")
+            
+            # 4) Determinando precio original
+            original_price = None
+            price_source = "unknown"
+            
+            # Método 1: Intentar usar deltaLast para calcular el precio anterior
+            delta_last = deal.get('deltaLast', [])
+            if isinstance(delta_last, list) and len(delta_last) > 0 and delta_last[0] is not None and delta_last[0] != 0:
+                # El precio original es el precio actual menos la diferencia (delta suele ser negativo en caso de descuento)
+                original_price_cents = current_price_cents - delta_last[0]
+                original_price = original_price_cents / 100.0
+                price_source = "deltaLast"
+                print(f"✅ Precio original (desde deltaLast): {original_price}, delta: {delta_last[0]/100.0}")
+                
+            # Método 2: Intentar usar los campos delta y deltaPercent para verificar si hay descuento
+            if original_price is None or original_price <= current_price:
+                delta = deal.get('delta', [])
+                if isinstance(delta, list) and len(delta) > 0 and isinstance(delta[0], list) and len(delta[0]) > 0:
+                    delta_value = delta[0][0]  # [dateRange=0:day][priceType=0:amazon]
+                    if delta_value is not None and delta_value < 0:  # Negative delta means price decreased
+                        # Calculate original price based on delta (current price - delta)
+                        original_price_cents = current_price_cents - delta_value
+                        original_price = original_price_cents / 100.0
+                        price_source = "delta"
+                        print(f"✅ Precio original (desde delta): {original_price}, delta: {delta_value/100.0}")
+            
+            # Método 3: Fallback a usar el precio promedio como respaldo
+            if original_price is None or original_price <= current_price:
+                avg_arr = deal.get('avg', [])
+                if (isinstance(avg_arr, list) and len(avg_arr) > 0 and 
+                    isinstance(avg_arr[0], list) and len(avg_arr[0]) > 0):
+                    orig_price_cents = avg_arr[0][0]  # [dateRange=0:day][priceType=0:amazon]
+                    if orig_price_cents is not None and orig_price_cents > 0:
+                        original_price = orig_price_cents / 100.0
+                        price_source = "avg"
+                        print(f"✅ Precio original (desde avg): {original_price}")
+            
+            # Si todo falla, usamos un precio original ligeramente mayor
+            if original_price is None or original_price <= current_price:
+                # Para evitar filtrar todos los productos, asumimos un pequeño descuento
+                original_price = current_price * 1.05  # 5% más que el precio actual
+                price_source = "estimated"
+                print(f"⚠️ Precio original estimado: {original_price}")
+            
+            # 5) Calcular ahorro y porcentaje de descuento
+            ahorro = original_price - current_price
+            
+            # Verificar que tenemos un descuento real
+            if ahorro <= 0:
+                print(f"❌ No hay ahorro real: {ahorro}")
+                skipped_deals += 1
+                continue
+                
+            # Calcular porcentaje de descuento
+            descuento_porcentaje = (ahorro / original_price) * 100
+            print(f"✅ Ahorro: {ahorro}, Descuento: {descuento_porcentaje}%")
+            
+            # 6) Categorías
+            categories = deal.get('categories', [])
+            if isinstance(categories, list) and categories:
+                category_str = ", ".join(str(cat) for cat in categories)
+            else:
+                category_str = "Desconocida"
+
+            # 7) Crear el diccionario de la oferta
+            processed.append({
+                "Title": title,
+                "Precio Original": round(original_price, 2),
+                "Precio con Descuento": round(current_price, 2),
+                "Ahorro": round(ahorro, 2),
+                "Descuento (%)": round(descuento_porcentaje, 1),
+                "Price Source": price_source,  # Useful for debugging
+                "Categoría": category_str,
+                "Link": link,
+                "Image": image_url,
+                # Guardar valores sin redondear para calcular el score después
+                "_ahorro_raw": ahorro,
+                "_descuento_raw": descuento_porcentaje
+            })
+            print(f"✅ Deal #{i+1} procesado correctamente")
+            
+        except Exception as e:
+            print(f"❌ Error procesando deal #{i+1}: {str(e)}")
+            skipped_deals += 1
             continue
-
-        if current_price_cents is None or current_price_cents < 0:
-            continue
-        current_price = current_price_cents / 100.0
-
-        # Usar el precio promedio (avg) como precio original
-        avg_arr = deal.get('avg', [])
-        if (isinstance(avg_arr, list) and len(avg_arr) > 0 and 
-            isinstance(avg_arr[0], list) and len(avg_arr[0]) > 0):
-            original_price_cents = avg_arr[0][0]
-        else:
-            original_price_cents = current_price_cents
-        original_price = original_price_cents / 100.0
-
-        discount_amount = original_price - current_price
-
-        # 6) Categorías
-        categories = deal.get('categories', [])
-        if isinstance(categories, list) and categories:
-            category_str = ", ".join(str(cat) for cat in categories)
-        else:
-            category_str = "Desconocida"
-
-        # 7) Crear el diccionario de la oferta
-        processed.append({
-            "Title": title,
-            "Precio Original": original_price,
-            "Precio con Descuento": current_price,
-            "Descuento": discount_amount,
-            "Categoría": category_str,
-            "Link": link,
-            "Image": image_url
-        })
+    
+    print(f"\n📊 Resumen: {total_deals} deals totales, {skipped_deals} omitidos, {len(processed)} procesados")
+    
+    # Calcular Deal Score con ponderación entre descuento y ahorro
+    if processed:
+        # Encontrar el valor máximo de ahorro para normalizar
+        max_ahorro = max(deal["_ahorro_raw"] for deal in processed)
+        
+        for deal in processed:
+            # Normalizar el ahorro a escala 0-100
+            normalized_savings = (deal["_ahorro_raw"] / max_ahorro) * 100
+            
+            # Calcular el Deal Score ponderado
+            deal_score = (discount_weight * deal["_descuento_raw"]) + (savings_weight * normalized_savings)
+            
+            # Añadir el score al diccionario
+            deal["Deal Score"] = round(deal_score, 1)
+        
+        # Ordenar por Deal Score (de mayor a menor)
+        processed.sort(key=lambda x: x["Deal Score"], reverse=True)
+        
+        # Eliminar campos de trabajo
+        for deal in processed:
+            del deal["_ahorro_raw"]
+            del deal["_descuento_raw"]
+        
+        print("✅ Deals ordenados por Deal Score (ponderación: "
+              f"{discount_weight*100}% descuento, {savings_weight*100}% ahorro)")
+    
     return processed
 
 # ---------------------------
@@ -268,13 +337,12 @@ if __name__ == '__main__':
         if deals_response:
             deals_processed = process_deals(deals_response)
             # Limitar el resultado a solo 5 ofertas
-            deals_processed = deals_processed[:5]
             print(f"\nSe procesaron {len(deals_processed)} ofertas")
             
             if deals_processed:
-                print("\nListado de ofertas:")
-                for d in deals_processed:
-                    print(d)
+                # print("\nListado de ofertas:")
+                # for d in deals_processed:
+                #     # print(d)
                 # Guardar el resultado en un archivo JSON
                 raw_json_str = json.dumps(deals_processed, indent=2)
                 with open("raw_response.json", "w", encoding="utf-8") as f:
