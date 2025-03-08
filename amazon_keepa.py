@@ -79,12 +79,13 @@ def get_deals_by_category(api, category_id):
             "domainId": 11,  
             "includeCategories": category_id,
             "dateRange": 0,
+            
             # Si deseas también aPlus aquí, Keepa no siempre lo soporta en deals,
             # pero si lo hiciera, podrías añadir: "aPlus": 1
         }
         deals_response = api.deals(deal_params)
         print("\n🔍 Respuesta cruda de Keepa:")
-        print(json.dumps(deals_response, indent=4, default=str))
+        # print(json.dumps(deals_response, indent=4, default=str))
         
         if isinstance(deals_response, dict):
             if deals_response.get('dr'):
@@ -108,6 +109,32 @@ def get_deals_by_category(api, category_id):
         print(f"❌ Error obteniendo ofertas para la categoría {category_id}: {e}")
         return None
 
+
+
+def get_image_url_from_integers(image_integers):
+    """
+    Converts an array of ASCII integer codes to a string to form the image name,
+    then constructs the full Amazon image URL.
+    
+    Args:
+        image_integers (list): List of integers representing ASCII character codes
+        
+    Returns:
+        str: Complete Amazon image URL or None if input is empty
+    """
+    if not image_integers:
+        return None
+        
+    try:
+        # Convert each integer to its corresponding ASCII character and join them
+        image_name = ''.join(chr(code) for code in image_integers)
+        # Construct the full Amazon image URL
+        return f"https://m.media-amazon.com/images/I/{image_name}"
+    except Exception as e:
+        print(f"Error converting image integers to URL: {e}")
+        return None
+    
+    
 def process_deals(deals_response):
     """
     Procesa la respuesta de Keepa y devuelve una lista de diccionarios con:
@@ -122,6 +149,7 @@ def process_deals(deals_response):
     processed = []
     if isinstance(deals_response, dict):
         deals_list = deals_response.get('dr', [])
+        print(deals_list[0])
     elif isinstance(deals_response, list):
         deals_list = deals_response
     else:
@@ -138,38 +166,47 @@ def process_deals(deals_response):
         else:
             link = "No ASIN disponible"
 
+        # Obtain image by transforming list of integers where Each entry represents the integer of a US-ASCII (ISO646-US) coded character - PUT CODE HERE
+        image_integers = deal.get('image', [])
+            
         # 2) Intentar extraer la imagen desde aPlus
-        image_url = None
-        a_plus = deal.get("aPlus", [])
-        if a_plus and isinstance(a_plus, list):
-            # Según doc: "aPlus": [{ "module": { "title": "...", "text": "...", "image": ... } }]
-            for module in a_plus:
-                module_data = module.get("module", {})
-                if "image" in module_data:
-                    # Puede ser string o array de strings
-                    image_field = module_data["image"]
-                    if isinstance(image_field, str):
-                        # Caso: "image" es un string con la URL
-                        image_url = image_field
-                        break
-                    elif isinstance(image_field, list) and len(image_field) > 0:
-                        # Caso: "image" es un array de URLs, tomamos la primera
-                        image_url = image_field[0]
-                        break
+        
+        if image_integers:
+            image_url = get_image_url_from_integers(image_integers)
+        else:
+            # Continue with your fallback methods for image URLs
+            image_url = "No se pudo armar el link"
+        # a_plus = deal.get("aPlus", [])
+        # if a_plus and isinstance(a_plus, list):
+        #     # Según doc: "aPlus": [{ "module": { "title": "...", "text": "...", "image": ... } }]
+        #     for module in a_plus:
+        #         module_data = module.get("module", {})
+        #         if "image" in module_data:
+        #             # Puede ser string o array de strings
+        #             image_field = module_data["image"]
+        #             if isinstance(image_field, str):
+        #                 # Caso: "image" es un string con la URL
+        #                 image_url = image_field
+        #                 break
+        #             elif isinstance(image_field, list) and len(image_field) > 0:
+        #                 # Caso: "image" es un array de URLs, tomamos la primera
+        #                 image_url = image_field[0]
+        #                 break
 
-        # 3) Fallback: usar imagesCSV
-        if not image_url:
-            images_csv = deal.get('imagesCSV', "")
-            if images_csv:
-                image_list = images_csv.split(',')
-                if len(image_list) > 0 and image_list[0]:
-                    # Depuración: imprimir el primer valor
-                    print(f"DEBUG: image_list[0] = {image_list[0].strip()}")
-                    image_url = f"https://images-na.ssl-images-amazon.com/images/I/{image_list[0].strip()}._SL1500_.jpg"
+        # # 3) Fallback: usar imagesCSV
+        # if not image_url:
+        #     images_csv = deal.get('imagesCSV', "")
+        #     print(f"DEBUG: imagesCSV = {images_csv}")
+        #     if images_csv:
+        #         image_list = images_csv.split(',')
+        #         if len(image_list) > 0 and image_list[0]:
+        #             # Depuración: imprimir el primer valor
+        #             print(f"DEBUG: image_list[0] = {image_list[0].strip()}")
+        #             image_url = f"https://images-na.ssl-images-amazon.com/images/I/{image_list[0].strip()}._SL1500_.jpg"
 
-        # 4) Fallback final: construir la URL a partir del ASIN (no siempre funciona)
-        if not image_url and asin:
-            image_url = f"https://images-na.ssl-images-amazon.com/images/I/{asin}._SL1500_.jpg"
+        # # 4) Fallback final: construir la URL a partir del ASIN (no siempre funciona)
+        # if not image_url and asin:
+        #     image_url = f"https://m.media-amazon.com/images/I/PERATE.jpg" 
 
         # 5) Extraer precios
         current_arr = deal.get('current', [])
@@ -233,6 +270,7 @@ if __name__ == '__main__':
             # Limitar el resultado a solo 5 ofertas
             deals_processed = deals_processed[:5]
             print(f"\nSe procesaron {len(deals_processed)} ofertas")
+            
             if deals_processed:
                 print("\nListado de ofertas:")
                 for d in deals_processed:
