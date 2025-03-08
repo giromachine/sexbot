@@ -139,15 +139,16 @@ def get_image_url_from_integers(image_integers):
         return None
     
     
-def process_deals(deals_response, discount_weight=0.6, savings_weight=0.4):
+def process_deals(deals_response, discount_weight=0.4, savings_weight=0.4,three_month_weight = 0.2):
     """
     Procesa la respuesta de Keepa y devuelve una lista de diccionarios con información detallada.
-    Ordena los resultados usando un sistema de puntuación ponderada entre descuento y ahorro.
+     Ordena los resultados usando un sistema de puntuación ponderada entre descuento, ahorro y bonus de 3 meses.
     
     Args:
         deals_response: La respuesta de la API de Keepa
         discount_weight: Peso para el porcentaje de descuento (0-1)
         savings_weight: Peso para el ahorro absoluto (0-1)
+        three_month_weight: Peso para el bonus del precio promedio en 3 meses (0-1)
     """
     processed = []
     total_deals = 0
@@ -258,6 +259,26 @@ def process_deals(deals_response, discount_weight=0.6, savings_weight=0.4):
             # Calcular porcentaje de descuento
             descuento_porcentaje = (ahorro / original_price) * 100
             print(f"✅ Ahorro: {ahorro}, Descuento: {descuento_porcentaje}%")
+
+            # NUEVO: Comparar precio actual con el mínimo histórico de 3 meses
+            data_obj = deal.get('data', {})
+            price_history = data_obj.get('priceAmazon', [])
+            bonus_value = 0
+            if price_history:
+                valid_prices = [p for p in price_history if p is not None and p >= 0]
+                if valid_prices:
+                    min_price = min(valid_prices) / 100.0
+                    if current_price <= min_price:
+                        bonus_value = 100  # Bonus completo si el precio es el más bajo en 3 meses
+                        print("✅ Bonus 3m asignado: Full bonus (precio actual:", current_price, "<= min 3m:", min_price, ")")
+                    else:
+                        bonus_value = 0
+                else:
+                    bonus_value = 0
+            else:
+                bonus_value = 0
+            # Guardar el bonus en el deal (campo temporal)
+            deal["_three_month_bonus"] = bonus_value
             
             # 6) Categorías
             categories = deal.get('categories', [])
@@ -273,13 +294,14 @@ def process_deals(deals_response, discount_weight=0.6, savings_weight=0.4):
                 "Precio con Descuento": round(current_price, 2),
                 "Ahorro": round(ahorro, 2),
                 "Descuento (%)": round(descuento_porcentaje, 1),
+                "Three Month Bonus (%)": round(bonus_value, 1),
                 "Price Source": price_source,  # Useful for debugging
-                "Categoría": category_str,
                 "Link": link,
                 "Image": image_url,
                 # Guardar valores sin redondear para calcular el score después
                 "_ahorro_raw": ahorro,
-                "_descuento_raw": descuento_porcentaje
+                "_descuento_raw": descuento_porcentaje,
+                "_three_month_bonus": bonus_value
             })
             print(f"✅ Deal #{i+1} procesado correctamente")
             
@@ -290,31 +312,32 @@ def process_deals(deals_response, discount_weight=0.6, savings_weight=0.4):
     
     print(f"\n📊 Resumen: {total_deals} deals totales, {skipped_deals} omitidos, {len(processed)} procesados")
     
-    # Calcular Deal Score con ponderación entre descuento y ahorro
+    # Calcular Deal Score con ponderación entre descuento, ahorro y bonus de 3 meses
     if processed:
-        # Encontrar el valor máximo de ahorro para normalizar
         max_ahorro = max(deal["_ahorro_raw"] for deal in processed)
-        
+        max_descuento = max(deal["_descuento_raw"] for deal in processed)
+        max_bonus = max(deal.get("_three_month_bonus", 0) for deal in processed) if any(deal.get("_three_month_bonus", 0) > 0 for deal in processed) else 0
+
+        three_month_weight = 0.2
+
         for deal in processed:
-            # Normalizar el ahorro a escala 0-100
-            normalized_savings = (deal["_ahorro_raw"] / max_ahorro) * 100
-            
-            # Calcular el Deal Score ponderado
-            deal_score = (discount_weight * deal["_descuento_raw"]) + (savings_weight * normalized_savings)
-            
-            # Añadir el score al diccionario
+            normalized_savings = (deal["_ahorro_raw"] / max_ahorro) * 100 if max_ahorro > 0 else 0
+            normalized_bonus = (deal["_three_month_bonus"] / max_bonus) * 100 if max_bonus > 0 else 0
+            deal_score = (discount_weight * deal["_descuento_raw"]) + (savings_weight * normalized_savings) + (three_month_weight * normalized_bonus)
             deal["Deal Score"] = round(deal_score, 1)
         
-        # Ordenar por Deal Score (de mayor a menor)
         processed.sort(key=lambda x: x["Deal Score"], reverse=True)
         
-        # Eliminar campos de trabajo
         for deal in processed:
-            del deal["_ahorro_raw"]
-            del deal["_descuento_raw"]
+            if "_ahorro_raw" in deal:
+                del deal["_ahorro_raw"]
+            if "_descuento_raw" in deal:
+                del deal["_descuento_raw"]
+            if "_three_month_bonus" in deal:
+                del deal["_three_month_bonus"]
         
         print("✅ Deals ordenados por Deal Score (ponderación: "
-              f"{discount_weight*100}% descuento, {savings_weight*100}% ahorro)")
+              f"{discount_weight*100}% descuento, {savings_weight*100}% ahorro, {three_month_weight*100}% bonus 3m)")
     
     return processed
 
