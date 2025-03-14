@@ -29,12 +29,12 @@ def send_deals_to_telegram(deals):
     """
     bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
     
-    for deal in deals[:17]:
+    for deal in deals[:1]:
         caption = (
-            f"🔥 *OFERTA AMAZON* 🔥\n\n"
+            f"🔥 *PRECIO MÁS BAJO AMAZON* 🔥\n\n"
             f"🛒 *{deal['Title']}*\n\n"
-            f"💰 Precio Original: ${deal['Precio Original']:.2f} MXN\n"
-            f"⚡ Precio con Descuento: ${deal['Precio con Descuento']:.2f} MXN\n"
+            f"💰 Precio Original: $ {deal['Precio Original']:.2f} MXN\n"
+            f"⚡ Precio con Descuento: $ {deal['Precio con Descuento']:.2f} MXN\n"
             f"📉 Descuento: {deal['Descuento (%)']:.2f}%\n\n"
             f"🔗 [¡Link de Amazon Aquí!]({deal['Link']})"
         )
